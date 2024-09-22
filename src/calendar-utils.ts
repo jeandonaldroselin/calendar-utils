@@ -1,4 +1,25 @@
-import { DateAdapter } from './date-adapters/date-adapter/index';
+import { DateAdapter } from '../../../date-adapters/date-adapter';
+
+/* -------------- NEW MODELS -------------- */
+export type CalendarResourceIdType = string | number;
+
+export interface CalendarResource<CalendarResourceMetaType = any> {
+  name: string;
+  id: CalendarResourceIdType;
+  meta?: CalendarResourceMetaType;
+}
+
+export interface ResourcesMaxRowsNumber<CalendarResourceMetaType = any> {
+  [index: number]: ResourcesMaxRowNumber<CalendarResourceMetaType>;
+}
+
+export interface ResourcesMaxRowNumber<CalendarResourceMetaType = any> {
+  resource: CalendarResource<CalendarResourceMetaType>;
+  count: number;
+  top: number;
+}
+
+/* ------------- OFFICIAL CALENDAR UTILS ------------ */
 
 export enum DAYS_OF_WEEK {
   SUNDAY = 0,
@@ -49,7 +70,7 @@ export interface EventAction {
   }): any;
 }
 
-export interface CalendarEvent<MetaType = any> {
+export interface CalendarEvent<MetaType = any, ResourceMetaType = any> {
   id?: string | number;
   start: Date;
   end?: Date;
@@ -64,6 +85,7 @@ export interface CalendarEvent<MetaType = any> {
   };
   draggable?: boolean;
   meta?: MetaType;
+  resources?: CalendarResource<ResourceMetaType>[];
 }
 
 export interface WeekViewAllDayEvent {
@@ -232,13 +254,8 @@ function getWeekViewEventSpan(
     totalDaysInView: number;
   }
 ): number {
-  const {
-    max,
-    differenceInSeconds,
-    addDays,
-    endOfDay,
-    differenceInDays,
-  } = dateAdapter;
+  const { max, differenceInSeconds, addDays, endOfDay, differenceInDays } =
+    dateAdapter;
   let span: number = SECONDS_IN_DAY;
   const begin: Date = max([event.start, startOfWeekDate]);
 
@@ -897,6 +914,7 @@ export function getMonthView(
 
 export interface GetDayViewArgs {
   events?: CalendarEvent[];
+  keepAllDay?: boolean;
   viewDate: Date;
   hourSegments: number;
   dayStart: {
@@ -939,6 +957,7 @@ function getDayView(
   dateAdapter: DateAdapter,
   {
     events,
+    keepAllDay,
     viewDate,
     hourSegments,
     dayStart,
@@ -969,7 +988,9 @@ function getDayView(
   endOfView.setSeconds(59, 999);
   const previousDayEvents: WeekViewTimeEvent[] = [];
   const eventsInPeriod = getEventsInPeriod(dateAdapter, {
-    events: events.filter((event: CalendarEvent) => !event.allDay),
+    events: keepAllDay
+      ? events
+      : events.filter((event: CalendarEvent) => !event.allDay),
     periodStart: startOfView,
     periodEnd: endOfView,
   });
@@ -1207,4 +1228,319 @@ export function validateEvents(
   });
 
   return isValid;
+}
+
+export interface ResourceWeekView<EventMetaType = any, ResourceMetaType = any> {
+  period: ViewPeriod;
+  allDayEventRows: WeekViewAllDayEventRow[];
+  rowColumns: ResourceWeekViewRowColumn<EventMetaType, ResourceMetaType>[];
+  resourcesMaxRowsNumber: ResourcesMaxRowsNumber;
+}
+
+export interface ResourceWeekViewRowColumn<
+  EventMetaType = any,
+  ResourceMetaType = any
+> {
+  date: Date;
+  eventsGroupedByResource: ResourceWeekViewRowEventContainer<
+    EventMetaType,
+    ResourceMetaType
+  >[];
+}
+
+export interface ResourceWeekViewRow {
+  resourceId: CalendarResourceIdType;
+  odd: boolean;
+  segments: ResourceWeekViewRowSegment[];
+}
+
+export interface ResourceWeekViewRowSegment {
+  isStart?: boolean;
+  date?: Date;
+  cssClass?: string;
+}
+
+export interface ResourceWeekViewRowEventContainer<
+  EventMetaType = any,
+  ResourceMetaType = any
+> {
+  resource: CalendarResource<ResourceMetaType>;
+  resourceCurrentDayEventNumber: number;
+  events: ResourceWeekViewRowEvent<EventMetaType>[];
+}
+
+export interface ResourceWeekViewRowEvent<EventMetaType = any> {
+  event: CalendarEvent;
+  height: number;
+  width: number;
+  top: number;
+  left: number;
+}
+
+export interface GetResourceWeekViewArgs {
+  resources: CalendarResource[];
+  events?: CalendarEvent[];
+  viewDate: Date;
+  weekStartsOn: number;
+  excluded?: number[];
+  precision?: 'minutes' | 'days';
+  absolutePositionedEvents?: boolean;
+  hourSegments?: number;
+  dayStart: Time;
+  dayEnd: Time;
+  weekendDays?: number[];
+  segmentHeight: number;
+  viewStart?: Date;
+  viewEnd?: Date;
+  minimumEventHeight?: number;
+  keepUnassignedEvents?: boolean;
+  unassignedRessourceName?: string;
+}
+
+export function getResourceWeekView(
+  dateAdapter: DateAdapter,
+  {
+    events = [],
+    resources = [],
+    viewDate,
+    weekStartsOn,
+    excluded = [],
+    precision = 'days',
+    absolutePositionedEvents = false,
+    hourSegments,
+    dayStart,
+    dayEnd,
+    weekendDays,
+    segmentHeight,
+    minimumEventHeight,
+    viewStart = dateAdapter.startOfWeek(viewDate, { weekStartsOn }),
+    viewEnd = dateAdapter.endOfWeek(viewDate, { weekStartsOn }),
+    keepUnassignedEvents = true,
+    unassignedRessourceName = 'Unassigned',
+  }: GetResourceWeekViewArgs
+): ResourceWeekView {
+  if (!events) {
+    events = [];
+  }
+  if (!resources) {
+    resources = [];
+  }
+
+  const { startOfDay, endOfDay } = dateAdapter;
+  viewStart = startOfDay(viewStart);
+  viewEnd = endOfDay(viewEnd);
+  const eventsInPeriod = getEventsInPeriod(dateAdapter, {
+    events,
+    periodStart: viewStart,
+    periodEnd: viewEnd,
+  });
+
+  const header = getWeekViewHeader(dateAdapter, {
+    viewDate,
+    weekStartsOn,
+    excluded,
+    weekendDays,
+    viewStart,
+    viewEnd,
+  });
+  let resourcesMaxRowsNumber = [];
+  const setResourcesMaxRowsNumber = (result) => {
+    resourcesMaxRowsNumber = result;
+  };
+  const rowColumns = getResourceWeekViewHourGrid(
+    dateAdapter,
+    {
+      events,
+      resources,
+      viewDate,
+      hourSegments,
+      hourDuration: 0.5,
+      dayStart,
+      dayEnd,
+      weekStartsOn,
+      excluded,
+      weekendDays,
+      segmentHeight,
+      viewStart,
+      viewEnd,
+      minimumEventHeight,
+      keepUnassignedEvents,
+      unassignedRessourceName,
+    },
+    setResourcesMaxRowsNumber
+  );
+
+  return {
+    allDayEventRows: getAllDayWeekEvents(dateAdapter, {
+      events: eventsInPeriod,
+      excluded,
+      precision,
+      absolutePositionedEvents,
+      viewStart,
+      viewEnd,
+    }),
+    period: {
+      events: eventsInPeriod,
+      start: header[0].date,
+      end: endOfDay(header[header.length - 1].date),
+    },
+    rowColumns,
+    resourcesMaxRowsNumber,
+  };
+}
+
+interface GetResourceWeekViewHourGridArgs extends GetDayViewHourGridArgs {
+  resources: CalendarResource[];
+  hourSegments: number;
+  weekStartsOn: number;
+  excluded?: number[];
+  weekendDays?: number[];
+  events?: CalendarEvent[];
+  segmentHeight: number;
+  viewStart: Date;
+  viewEnd: Date;
+  minimumEventHeight: number;
+  keepUnassignedEvents: boolean;
+  unassignedRessourceName: string;
+}
+
+function getResourceWeekViewHourGrid<EventMetaType, ResourceMetaType>(
+  dateAdapter: DateAdapter,
+  {
+    events,
+    resources,
+    viewDate,
+    hourSegments,
+    hourDuration,
+    dayStart,
+    dayEnd,
+    weekStartsOn,
+    excluded,
+    weekendDays,
+    segmentHeight,
+    viewStart,
+    viewEnd,
+    minimumEventHeight,
+    keepUnassignedEvents,
+    unassignedRessourceName,
+  }: GetResourceWeekViewHourGridArgs,
+  setResourcesMaxRowsNumber: (param: any) => any
+): ResourceWeekViewRowColumn[] {
+  const weekDays = getWeekViewHeader(dateAdapter, {
+    viewDate,
+    weekStartsOn,
+    excluded,
+    weekendDays,
+    viewStart,
+    viewEnd,
+  });
+  const resourcesMaxRowsNumber = [];
+  return weekDays.map((day) => {
+    const dayView = getDayView(dateAdapter, {
+      events,
+      viewDate: day.date,
+      hourSegments,
+      dayStart,
+      dayEnd,
+      segmentHeight,
+      eventWidth: 1,
+      hourDuration,
+      minimumEventHeight,
+      keepAllDay: true,
+    });
+
+    const mappedEvents = (
+      calendarEvents: CalendarEvent<EventMetaType, ResourceMetaType>[]
+    ) =>
+      calendarEvents.map((event, index) => {
+        return {
+          event,
+          height: segmentHeight,
+          left: 0,
+          width: 100,
+          top: index * segmentHeight,
+        };
+      });
+
+    const accumulatePreviousContainerCountsByIndex = (
+      currentContainerIndex: number
+    ): number => {
+      let count = 0;
+      for (let k = 0; k < currentContainerIndex; k++) {
+        count += resourcesMaxRowsNumber[k].count;
+      }
+      return count;
+    };
+
+    const getDayEventsGroupedByResource = (
+      eventList: CalendarEvent<EventMetaType, ResourceMetaType>[],
+      resourceList: CalendarResource<ResourceMetaType>[],
+      keepUnassignedEvents: boolean,
+      unassignedRessourceNameLocal: string
+    ): ResourceWeekViewRowEventContainer<ResourceMetaType>[] => {
+      const unknwownResource: CalendarResource<ResourceMetaType> = {
+        id: undefined,
+        name: unassignedRessourceNameLocal,
+      };
+      const combinedResourceList =
+        keepUnassignedEvents === true
+          ? [...resourceList, ...[unknwownResource]]
+          : resourceList;
+      return combinedResourceList.map(
+        (
+          resource: CalendarResource<ResourceMetaType>,
+          resourceIndex: number
+        ) => {
+          const regularResourceFilterClosure: (
+            event: CalendarEvent
+          ) => boolean = (event: CalendarEvent) =>
+            event.resources &&
+            event.resources.some(
+              (oneResource: CalendarResource<ResourceMetaType>) =>
+                oneResource.id === resource.id
+            );
+          const unknownResourceFilterClosure: (
+            event: CalendarEvent
+          ) => boolean = (event: CalendarEvent) =>
+            !event.resources || event.resources.length === 0;
+          const filterClosure =
+            resource.id !== undefined
+              ? regularResourceFilterClosure
+              : unknownResourceFilterClosure;
+          const filteredEvents = eventList.filter(filterClosure);
+          const resourcesMaxRowsNumberItem =
+            resourcesMaxRowsNumber[resourceIndex];
+          const isCountGreaterThanPrevious =
+            !!resourcesMaxRowsNumberItem &&
+            resourcesMaxRowsNumberItem.count >= filteredEvents.length;
+          const newCount = isCountGreaterThanPrevious
+            ? resourcesMaxRowsNumberItem.count
+            : filteredEvents.length;
+          resourcesMaxRowsNumber[resourceIndex] = {
+            ...resourcesMaxRowsNumberItem,
+            count: newCount + (resourceIndex >= 0 && newCount == 0 ? 1 : 0),
+            resource: resource,
+            top:
+              accumulatePreviousContainerCountsByIndex(resourceIndex) *
+              segmentHeight,
+          };
+          return {
+            resource,
+            resourceCurrentDayEventNumber: filteredEvents.length ?? 1,
+            events: mappedEvents(filteredEvents),
+          };
+        }
+      );
+    };
+    setResourcesMaxRowsNumber(resourcesMaxRowsNumber);
+    return {
+      date: day.date,
+      eventsGroupedByResource: getDayEventsGroupedByResource(
+        dayView.events.map((timeEvent) => timeEvent.event),
+        resources,
+        keepUnassignedEvents,
+        unassignedRessourceName
+      ),
+    };
+  });
 }
